@@ -1,0 +1,20 @@
+# Arduino IDE build files
+*.ino.*
+*.elf
+*.hex
+*.bin
+*.map
+*.bak
+*.tmp
+
+# PlatformIO (만약을 위해)
+.pio/
+.vscode/
+
+# Firebase local settings
+.firebase/
+firebase-debug.log
+
+# macOS / Windows system file
+.DS_Store
+Thumbs.db
