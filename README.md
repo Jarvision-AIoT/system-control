@@ -18,6 +18,7 @@ VISION-MODULE/
 │   └── ardu-system.ido
 │   └── secrets.h
 ├── README.md
+├── .gitignore
 └── requirements.txt
 ```
 
