@@ -12,7 +12,13 @@
 - Python
   
 ## 디렉토리 구조
-
-
+```plaintext
+VISION-MODULE/
+├── ardu-system/
+│   └── ardu-system.ido
+│   └── secrets.h
+├── README.md
+└── requirements.txt
+```
 
 ## 실행 방법
