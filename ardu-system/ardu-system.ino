@@ -33,16 +33,13 @@
 */
 
 #include <Arduino.h>
-#include "secrets.h"
-#include <Firebase.h>
-#include "PinDefinitionsAndMore.h" // Define macros for input and output pin etc.
-#include <IRremote.hpp>
-//#include <ArduinoJson.h>
+#include "secrets.h"                // Define WIFI and Firebase Realtime Database
+#include <Firebase.h>               // Firebase library
+#include "PinDefinitionsAndMore.h"  // Define macros for input and output pin etc.
+#include <IRremote.hpp>             // IR signal library
 
 #define DECODE_NEC          // Includes Apple and Onkyo
 #define DECODE_DISTANCE_WIDTH // In case NEC is not received correctly. Universal decoder for pulse distance width protocols
-#define DELAY_AFTER_SEND 2000
-#define DELAY_AFTER_LOOP 5000
 
 /* Use the following instance for Test Mode (No Authentication) */
 // Firebase fb(REFERENCE_URL);
@@ -51,10 +48,7 @@
 Firebase fb(REFERENCE_URL, AUTH_TOKEN);
 
 unsigned long previousMillis = 0;
-const long interval = 2000;
-int Recv_pin = 10; // 수신기는 10번 핀
-int Send_pin = 3;
-IRrecv irrecv(Recv_pin); //IRrecv 객체 생성
+const long interval = 500; //default: 2000 recommended: 500~1000
 decode_results results; // 수신 데이터 저장 구조체
 
 void setup()
@@ -114,12 +108,12 @@ void send_ir_data()
     Serial.println(sRepeats, HEX);
     Serial.flush(); // To avoid disturbing the software PWM generation by serial output interrupts
 
-    // clip repeats at 4
-    if (sRepeats > 4)
+    // clip repeats at 3
+    if (sRepeats > 3)
     {
-        sRepeats = 4;
+        sRepeats = 3;
     }
-    // Results for the first loop to: Protocol=NEC Address=0x102 Command=0x34 Raw-Data=0xCB340102 (32 bits)
+    // Results for the first loop to: Protocol=NEC Address=0x0123 Command=0x45(32 bits)
     IrSender.sendNEC(sAddress, sCommand, sRepeats);
 }
 
@@ -143,11 +137,70 @@ void receive_ir_data()
     }
 }
 
+int IRsignal(String cmd)
+{
+  if (cmd == "{\"type\":\"fist\"}") //off
+  {
+    sAddress = 0x00;
+    sCommand = 0x02;
+    sRepeats = 3;
+  }
+  else if (cmd == "{\"type\":\"open\"}") //on
+  {
+    sAddress = 0x00;
+    sCommand = 0x03;
+    sRepeats = 3;
+  }
+  else if (cmd == "{\"type\":\"ok_sign\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 1;
+  }
+  else if (cmd == "{\"type\":\"point\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 2;
+  }
+  else if (cmd == "{\"type\":\"peace\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 3;
+  }
+  else if (cmd == "{\"type\":\"standby\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 4;
+  }
+  else if (cmd == "{\"type\":\"thumbs_up\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 5;
+  }
+  else if (cmd == "{\"type\":\"rock\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 6;
+  }
+  else if (cmd == "{\"type\":\"love_u\"}")
+  {
+    sAddress = 0x0123;
+    sCommand = 0x45;
+    sRepeats = 7;
+  }
+}
+
 String prevCmd = "temp";
 
 void loop()
 {
   unsigned long currentMillis = millis();
+  receive_ir_data();
 
   if (currentMillis - previousMillis >= interval)
   {
@@ -162,85 +215,14 @@ void loop()
       Serial.print(") ");
       Serial.print("Received IR Command: ");
       Serial.println(command);
-      if (prevCmd != command) //임시용 변화가 생기면 단일 출력
+      if (prevCmd != command) // 임시용 / 변화가 생기면 단일 출력
       {
-        if (command == "{\"type\":\"fist\"}") //off
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 1;
-        }
-        else if (command == "{\"type\":\"open\"}") //on
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 2;
-        }
-        else if (command == "{\"type\":\"ok_sign\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 3;
-        }
-        else if (command == "{\"type\":\"point\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 4;
-        }
-        else if (command == "{\"type\":\"peace\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 5;
-        }
-        else if (command == "{\"type\":\"standby\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 6;
-        }
-        else if (command == "{\"type\":\"thumbs_up\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 7;
-        }
-        else if (command == "{\"type\":\"rock\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 8;
-        }
-        else if (command == "{\"type\":\"love_u\"}")
-        {
-          sAddress = 0x0102;
-          sCommand = 0x34;
-          sRepeats = 9;
-        }
+        IRsignal(command);
         send_ir_data();
         IrReceiver.restartAfterSend(); // Is a NOP if sending does not require a timer.
-        delay((RECORD_GAP_MICROS / 1000) + 5);
-        receive_ir_data();
       }
 
-      /*
-        #define UNKNOWN 0
-        #define NEC 1
-        #define SONY 2
-        #define RC5 3
-        #define RC6 4
-        #define PANASONIC_OLD 5
-        #define JVC 6
-        #define NECX 7
-        #define SAMSUNG36 8
-        #define GICABLE 9 
-        #define DIRECTV 10
-        #define RCMM 11
-      */
-
       prevCmd = command;
-      delay(1000);
     }
     else
     {
