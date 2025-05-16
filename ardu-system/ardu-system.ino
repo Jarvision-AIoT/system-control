@@ -34,18 +34,23 @@
 
 #include <Arduino.h>
 #include "secrets.h"                // Define WIFI and Firebase Realtime Database
-#include <Firebase.h>               // Firebase library
+#include <ArduinoMqttClient.h>      // Define MQTT client settings
 #include "PinDefinitionsAndMore.h"  // Define macros for input and output pin etc.
 #include <IRremote.hpp>             // IR signal library
+#include <WiFiS3.h>                 // Since ARDUINO_UNOR4_WIFI is used
 
-#define DECODE_NEC          // Includes Apple and Onkyo
-#define DECODE_DISTANCE_WIDTH // In case NEC is not received correctly. Universal decoder for pulse distance width protocols
+#define DECODE_NEC                  // Includes Apple and Onkyo
+#define DECODE_DISTANCE_WIDTH       // In case NEC is not received correctly. Universal decoder for pulse distance width protocols
 
-/* Use the following instance for Test Mode (No Authentication) */
-// Firebase fb(REFERENCE_URL);
+char ssid[] = WIFI_SSID;            // your network SSID (name)
+char pass[] = WIFI_PASSWORD;        // your network password (use for WPA, or use as key for WEP)
 
-/* Use the following instance for Locked Mode (With Authentication) */
-Firebase fb(REFERENCE_URL, AUTH_TOKEN);
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+
+const char broker[] = "test.mosquitto.org";
+const char topic[]  = "arduino/simple";
+int        port     = 1883;
 
 unsigned long previousMillis = 0;
 const long interval = 500; //default: 2000 recommended: 500~1000
@@ -54,35 +59,53 @@ decode_results results; // 수신 데이터 저장 구조체
 void setup()
 {
   Serial.begin(9600);
-  #if !defined(ARDUINO_UNOWIFIR4)
-    WiFi.mode(WIFI_STA);
-  #else
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LOW);
-  #endif
-  WiFi.disconnect();
-  delay(1000);
-
-  /* Connect to WiFi */
-  Serial.println();
-  Serial.println();
-  Serial.print("Connecting to: ");
-  Serial.println(WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.print("-");
-    delay(500);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
   }
 
-  Serial.println();
-  Serial.println("WiFi Connected");
+  // attempt to connect to WiFi network:
+  Serial.print("Attempting to connect to WPA SSID: ");
+  Serial.println(ssid);
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    // failed, retry
+    Serial.print("-");
+    delay(5000);
+  }
+
+  Serial.println("You're connected to the network");
   Serial.println();
 
   #if defined(ARDUINO_UNOWIFIR4)
     digitalWrite(LED_BUILTIN, HIGH);
   #endif
+
+  Serial.print("Attempting to connect to the MQTT broker: ");
+  Serial.println(broker);
+
+  if (!mqttClient.connect(broker, port))
+  {
+    Serial.print("MQTT connection failed! Error code = ");
+    Serial.println(mqttClient.connectError());
+
+    while (1);
+  }
+
+  Serial.println("You're connected to the MQTT broker!");
+  Serial.println();
+
+  Serial.print("Subscribing to topic: ");
+  Serial.println(topic);
+  Serial.println();
+
+  // subscribe to a topic
+  mqttClient.subscribe(topic);
+
+  // topics can be unsubscribed using:
+  // mqttClient.unsubscribe(topic);
+
+  Serial.print("Waiting for messages on topic: ");
+  Serial.println(topic);
+  Serial.println();
 
   Serial.println("Start IR");
   IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK); // 수신기 작동 시작
@@ -199,34 +222,36 @@ String prevCmd = "temp";
 
 void loop()
 {
-  unsigned long currentMillis = millis();
   receive_ir_data();
+  unsigned long currentMillis = millis();
+  int messageSize = mqttClient.parseMessage();
+  String command = "";
 
-  if (currentMillis - previousMillis >= interval)
+  if (messageSize)
   {
-    previousMillis = currentMillis;
+    // we received a message, print out the topic and contents
+    Serial.print(currentMillis);
+    Serial.print(") Received a message with topic '");
+    Serial.print(mqttClient.messageTopic());
+    Serial.print("', length ");
+    Serial.print(messageSize);
+    Serial.println(" bytes:");
 
-    // Firebase에서 데이터 가져오기
-    //String command = fb.getString("Example/IR_COMMAND");
-    String command = fb.getString("arduino/gesture/right");
-    if (command.length() > 0)
+    // use the Stream interface to print the contents
+    Serial.print("Received IR Command: ");
+    while (mqttClient.available())
     {
-      Serial.print(currentMillis);
-      Serial.print(") ");
-      Serial.print("Received IR Command: ");
-      Serial.println(command);
-      if (prevCmd != command) // 임시용 / 변화가 생기면 단일 출력
-      {
-        IRsignal(command);
-        send_ir_data();
-        IrReceiver.restartAfterSend(); // Is a NOP if sending does not require a timer.
-      }
+      command += (char)mqttClient.read();
+    }
+    Serial.println(command);
 
-      prevCmd = command;
-    }
-    else
+    if (prevCmd != command) // 임시용 / 변화가 생기면 단일 출력
     {
-      Serial.println("No command received or error occurred.");
+      IRsignal(command);
+      send_ir_data();
+      IrReceiver.restartAfterSend(); // Is a NOP if sending does not require a timer.
     }
+
+    prevCmd = command;
   }
 }
