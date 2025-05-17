@@ -9,8 +9,9 @@
 
   The "secrets.h" file should include:
   - Your Wi-Fi SSID and Password
-  - Your Firebase Realtime Database URL
-  - (OPTIONAL) Firebase Authentication Token
+  - Your MQTT Broker URL or IP address
+  - Your selected MQTT Broker Topic
+  - Port for your Broker (Usually 1883)
 
   Ensure that "secrets.h" is properly configured and includes the correct
   information for your project. Failure to do so may result in connection
@@ -20,202 +21,150 @@
   this sketch.
 */
 
-/*
-  ---------------------------------
-      INFO: ArduinoJson library   
-  ---------------------------------
-
-  Download ArduinoJson library from the Library Manager:
-  https://www.arduino.cc/reference/en/libraries/arduinojson/
-
-  For guidance on serialization and deserialization, visit:
-  https://arduinojson.org/v7/assistant/
-*/
-
 #include <Arduino.h>
-#include "secrets.h"                // Define WIFI and Firebase Realtime Database
-#include <ArduinoMqttClient.h>      // Define MQTT client settings
-#include "PinDefinitionsAndMore.h"  // Define macros for input and output pin etc.
-#include <IRremote.hpp>             // IR signal library
-#include <WiFiS3.h>                 // Since ARDUINO_UNOR4_WIFI is used
+#include <WiFiS3.h>                 // For Arduino UNO R4 WiFi
+#include <ArduinoMqttClient.h>
+#include "PinDefinitionsAndMore.h"  // IR pin definitions
+#include <IRremote.hpp>
+#include "secrets.h"                // Contains WIFI_SSID and WIFI_PASSWORD
 
-#define DECODE_NEC                  // Includes Apple and Onkyo
-#define DECODE_DISTANCE_WIDTH       // In case NEC is not received correctly. Universal decoder for pulse distance width protocols
+#define DECODE_NEC
+#define DECODE_DISTANCE_WIDTH
 
-char ssid[] = WIFI_SSID;            // your network SSID (name)
-char pass[] = WIFI_PASSWORD;        // your network password (use for WPA, or use as key for WEP)
+char ssid[] = WIFI_SSID;
+char pass[] = WIFI_PASSWORD;
 
 WiFiClient wifiClient;
 MqttClient mqttClient(wifiClient);
 
-const char broker[] = "test.mosquitto.org";
-const char topic[]  = "arduino/simple";
+const char broker[] = BROKER_IP;
+const char topic[]  = TOPIC_ID;
 int        port     = 1883;
 
 unsigned long previousMillis = 0;
-const long interval = 500; //default: 2000 recommended: 500~1000
-decode_results results; // 수신 데이터 저장 구조체
+const long interval = 500;
+decode_results results;
+
+/*
+  Note: if your wifi connection has some issue, try using fixed IP, gateway, subnet, and dns using code below.
+  This method WORK but not recommended.
+  IPAddress local_ip(?, ?, ?, ?);     // IP address that is not likely to be used
+  IPAddress gateway(?, ?, ?, ?);      // gateway checked from PC
+  IPAddress subnet(?, ?, ?, ?);       // subnet checked from PC
+  IPAddress dns(?, ?, ?, ?);          // We used Google Public DNS when testing
+*/
 
 void setup()
 {
   Serial.begin(9600);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
-  }
+  delay(2000);
 
-  // attempt to connect to WiFi network:
-  Serial.print("Attempting to connect to WPA SSID: ");
-  Serial.println(ssid);
-  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    // failed, retry
+  Serial.println("Setting static IP...");
+  //WiFi.config(local_ip, dns, gateway, subnet);
+  
+  Serial.print("Connecting to WiFi SSID: ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.begin(ssid, pass);
+  delay(3000);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(1000);
     Serial.print("-");
-    delay(5000);
   }
 
-  Serial.println("You're connected to the network");
-  Serial.println();
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
   #if defined(ARDUINO_UNOWIFIR4)
     digitalWrite(LED_BUILTIN, HIGH);
   #endif
 
-  Serial.print("Attempting to connect to the MQTT broker: ");
-  Serial.println(broker);
+  Serial.println("\n===== MQTT Connection Start =====");
+  Serial.print("Connecting to broker: ");
+  Serial.print(broker);
+  Serial.print(":");
+  Serial.println(port);
 
   if (!mqttClient.connect(broker, port))
   {
-    Serial.print("MQTT connection failed! Error code = ");
+    Serial.print("[ERROR] MQTT connection failed! Error code = ");
     Serial.println(mqttClient.connectError());
-
-    while (1);
+    while (1); // stop here
   }
 
-  Serial.println("You're connected to the MQTT broker!");
-  Serial.println();
-
-  Serial.print("Subscribing to topic: ");
-  Serial.println(topic);
-  Serial.println();
-
-  // subscribe to a topic
+  Serial.println("MQTT broker connected!");
   mqttClient.subscribe(topic);
-
-  // topics can be unsubscribed using:
-  // mqttClient.unsubscribe(topic);
-
-  Serial.print("Waiting for messages on topic: ");
+  Serial.print("Subscribed to topic: ");
   Serial.println(topic);
-  Serial.println();
+  Serial.println("==============================");
 
-  Serial.println("Start IR");
-  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK); // 수신기 작동 시작
-  Serial.print(F("Ready to receive IR signals of protocols: "));
+  Serial.println("===== IR Initialization =====");
+  IrReceiver.begin(IR_RECEIVE_PIN, ENABLE_LED_FEEDBACK);
+  Serial.print(F("Ready to receive IR at pin "));
+  Serial.println(IR_RECEIVE_PIN);
   printActiveIRProtocols(&Serial);
-  Serial.println(F("at pin " STR(IR_RECEIVE_PIN)));
-  IrSender.begin(); // Start with IR_SEND_PIN -which is defined in PinDefinitionsAndMore.h- as send pin and enable feedback LED at default feedback LED pin
-  Serial.println(F("Send IR signals at pin " STR(IR_SEND_PIN)));
+
+  IrSender.begin();
+  Serial.print(F("Ready to send IR at pin "));
+  Serial.println(IR_SEND_PIN);
+  Serial.println("==============================");
 }
 
 uint16_t sAddress = 0x0123;
 uint8_t sCommand = 0x45;
 uint8_t sRepeats = 1;
 
-/*
- * Send NEC IR protocol
- */
 void send_ir_data()
 {
-    Serial.print(F("Sending: 0x"));
-    Serial.print(sAddress, HEX);
-    Serial.print(sCommand, HEX);
-    Serial.println(sRepeats, HEX);
-    Serial.flush(); // To avoid disturbing the software PWM generation by serial output interrupts
+  Serial.print(F("Sending IR -> Addr: 0x"));
+  Serial.print(sAddress, HEX);
+  Serial.print(" Cmd: 0x");
+  Serial.print(sCommand, HEX);
+  Serial.print(" Repeats: ");
+  Serial.println(sRepeats);
+  Serial.flush();
 
-    // clip repeats at 3
-    if (sRepeats > 3)
-    {
-        sRepeats = 3;
-    }
-    // Results for the first loop to: Protocol=NEC Address=0x0123 Command=0x45(32 bits)
-    IrSender.sendNEC(sAddress, sCommand, sRepeats);
+  if (sRepeats > 3)
+    sRepeats = 3;
+
+  IrSender.sendNEC(sAddress, sCommand, sRepeats);
 }
 
 void receive_ir_data()
 {
-    if (IrReceiver.decode())
-    {
-        Serial.print(F("Decoded protocol: "));
-        Serial.print(getProtocolString(IrReceiver.decodedIRData.protocol));
-        Serial.print(F(", decoded raw data: "));
-    #if (__INT_WIDTH__ < 32)
-        Serial.print(IrReceiver.decodedIRData.decodedRawData, HEX);
-    #else
-        PrintULL::print(&Serial, IrReceiver.decodedIRData.decodedRawData, HEX);
-    #endif
-        Serial.print(F(", decoded address: "));
-        Serial.print(IrReceiver.decodedIRData.address, HEX);
-        Serial.print(F(", decoded command: "));
-        Serial.println(IrReceiver.decodedIRData.command, HEX);
-        IrReceiver.resume();
-    }
+  if (IrReceiver.decode())
+  {
+    Serial.print(F("Received IR - Protocol: "));
+    Serial.print(getProtocolString(IrReceiver.decodedIRData.protocol));
+    Serial.print(" Raw: ");
+#if (__INT_WIDTH__ < 32)
+    Serial.print(IrReceiver.decodedIRData.decodedRawData, HEX);
+#else
+    PrintULL::print(&Serial, IrReceiver.decodedIRData.decodedRawData, HEX);
+#endif
+    Serial.print(" Addr: ");
+    Serial.print(IrReceiver.decodedIRData.address, HEX);
+    Serial.print(" Cmd: ");
+    Serial.println(IrReceiver.decodedIRData.command, HEX);
+    IrReceiver.resume();
+  }
 }
 
 int IRsignal(String cmd)
 {
-  if (cmd == "{\"type\":\"fist\"}") //off
-  {
-    sAddress = 0x00;
-    sCommand = 0x02;
-    sRepeats = 3;
-  }
-  else if (cmd == "{\"type\":\"open\"}") //on
-  {
-    sAddress = 0x00;
-    sCommand = 0x03;
-    sRepeats = 3;
-  }
-  else if (cmd == "{\"type\":\"ok_sign\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 1;
-  }
-  else if (cmd == "{\"type\":\"point\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 2;
-  }
-  else if (cmd == "{\"type\":\"peace\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 3;
-  }
-  else if (cmd == "{\"type\":\"standby\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 4;
-  }
-  else if (cmd == "{\"type\":\"thumbs_up\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 5;
-  }
-  else if (cmd == "{\"type\":\"rock\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 6;
-  }
-  else if (cmd == "{\"type\":\"love_u\"}")
-  {
-    sAddress = 0x0123;
-    sCommand = 0x45;
-    sRepeats = 7;
-  }
+  if (cmd == "{\"type\":\"fist\"}") { sAddress = 0x00; sCommand = 0x02; sRepeats = 3; }
+  else if (cmd == "{\"type\":\"open\"}") { sAddress = 0x00; sCommand = 0x03; sRepeats = 3; }
+  else if (cmd == "{\"type\":\"ok_sign\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 1; }
+  else if (cmd == "{\"type\":\"point\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 2; }
+  else if (cmd == "{\"type\":\"peace\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 3; }
+  else if (cmd == "{\"type\":\"standby\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 4; }
+  else if (cmd == "{\"type\":\"thumbs_up\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 5; }
+  else if (cmd == "{\"type\":\"rock\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 6; }
+  else if (cmd == "{\"type\":\"love_u\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 7; }
+  return 0;
 }
 
 String prevCmd = "temp";
@@ -223,33 +172,31 @@ String prevCmd = "temp";
 void loop()
 {
   receive_ir_data();
-  unsigned long currentMillis = millis();
-  int messageSize = mqttClient.parseMessage();
-  String command = "";
 
+  int messageSize = mqttClient.parseMessage();
   if (messageSize)
   {
-    // we received a message, print out the topic and contents
-    Serial.print(currentMillis);
-    Serial.print(") Received a message with topic '");
+    String command = "";
+    Serial.print(millis());
+    Serial.print("ms) Received MQTT topic '");
     Serial.print(mqttClient.messageTopic());
-    Serial.print("', length ");
+    Serial.print("' (");
     Serial.print(messageSize);
-    Serial.println(" bytes:");
+    Serial.println(" bytes):");
 
-    // use the Stream interface to print the contents
-    Serial.print("Received IR Command: ");
     while (mqttClient.available())
     {
       command += (char)mqttClient.read();
     }
+
+    Serial.print("Parsed command: ");
     Serial.println(command);
 
-    if (prevCmd != command) // 임시용 / 변화가 생기면 단일 출력
+    if (prevCmd != command)
     {
       IRsignal(command);
       send_ir_data();
-      IrReceiver.restartAfterSend(); // Is a NOP if sending does not require a timer.
+      IrReceiver.restartAfterSend();
     }
 
     prevCmd = command;
