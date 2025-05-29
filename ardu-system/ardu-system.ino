@@ -55,9 +55,14 @@ unsigned long previousMillis = 0;
 const long interval = 500;
 decode_results results;
 
+//IPAddress local_ip(192, 168, 142, 200);  // 사용되지 않을 고정 IP
+//IPAddress gateway(192, 168, 142, 47);    // PC에서 확인한 기본 게이트웨이
+//IPAddress subnet(255, 255, 255, 0);      // PC와 동일
+//IPAddress dns(8, 8, 8, 8);               // Google Public DNS
+
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(19200);
   delay(2000);
 
   //Serial.println("Setting static IP...");
@@ -160,9 +165,9 @@ int IRsignal(String cmd)
 {
   if (cmd == "{\"type\": \"Close\"}") { sAddress = 0x00; sCommand = 0x02; sRepeats = 3; }            //무드등 끄기
   else if (cmd == "{\"type\": \"Open\"}") { sAddress = 0x00; sCommand = 0x03; sRepeats = 3; }        //무드등 키기
-  else if (cmd == "{\"type\": \"OK\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 1; }
-  else if (cmd == "{\"type\":\"Pointer\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 2; }
-  else if (cmd == "{\"type\": \"Peace\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 3; }
+  else if (cmd == "{\"type\": \"OK\"}") { sAddress = 0x00; sCommand = 0x45; sRepeats = 3; }          //선풍기 On/Off
+  else if (cmd == "{\"type\": \"Pointer\"}") { sAddress = 0x00; sCommand = 0x47; sRepeats = 3; }     //선풍기 LIGHT 1단/2단/Off
+  else if (cmd == "{\"type\": \"Peace\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 3; }     //
   else if (cmd == "{\"type\":\"standby\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 4; }
   else if (cmd == "{\"type\":\"thumbs_up\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 5; }
   else if (cmd == "{\"type\":\"rock\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 6; }
@@ -193,18 +198,36 @@ void loop()
       command += (char)mqttClient.read();
     }
 
+    //test code for time taken
+    //if (command == "test complete")
+    //  return;
     //mqttClient.beginMessage(topic);
-    //mqttClient.print(command);
+    //mqttClient.print("test complete");
     //mqttClient.endMessage();
-
+    
     Serial.print("Parsed command: ");
     Serial.println(command);
 
     if (prevCmd != command)
     {
-      IRsignal(command);
-      send_ir_data();
-      IrReceiver.restartAfterSend();
+      if (command == "{\"type\": \"love_u\"}")
+      {
+        Serial.println(command);
+        command = "{\"type\": \"OK\"}";
+        IRsignal(command);
+        send_ir_data();
+        IrReceiver.restartAfterSend();
+        command = "{\"type\": \"Open\"}";
+        IRsignal(command);
+        send_ir_data();
+        IrReceiver.restartAfterSend();
+      }
+      else
+      {
+        IRsignal(command);
+        send_ir_data();
+        IrReceiver.restartAfterSend();
+      }
     }
 
     prevCmd = command;
