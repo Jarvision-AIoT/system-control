@@ -51,8 +51,6 @@ const char broker[] = BROKER_IP;
 const char topic[]  = TOPIC_ID;
 int        port     = PORT_ADDR;
 
-unsigned long previousMillis = 0;
-const long interval = 500;
 decode_results results;
 
 //IPAddress local_ip(192, 168, 142, 200);  // 사용되지 않을 고정 IP
@@ -122,7 +120,7 @@ void setup()
 }
 
 uint16_t sAddress = 0x0123;
-uint8_t sCommand = 0x45;
+uint8_t sCommand = 0xFF;
 uint8_t sRepeats = 1;
 
 void send_ir_data()
@@ -148,11 +146,11 @@ void receive_ir_data()
     Serial.print(F("Received IR - Protocol: "));
     Serial.print(getProtocolString(IrReceiver.decodedIRData.protocol));
     Serial.print(" Raw: ");
-#if (__INT_WIDTH__ < 32)
+  #if (__INT_WIDTH__ < 32)
     Serial.print(IrReceiver.decodedIRData.decodedRawData, HEX);
-#else
+  #else
     PrintULL::print(&Serial, IrReceiver.decodedIRData.decodedRawData, HEX);
-#endif
+  #endif
     Serial.print(" Addr: ");
     Serial.print(IrReceiver.decodedIRData.address, HEX);
     Serial.print(" Cmd: ");
@@ -161,18 +159,96 @@ void receive_ir_data()
   }
 }
 
-int IRsignal(String cmd)
+int flagTV = 0;
+int flagS = 0;
+
+void IRsignal(String cmd)
 {
-  if (cmd == "{\"type\": \"Close\"}") { sAddress = 0x00; sCommand = 0x02; sRepeats = 3; }            //무드등 끄기
-  else if (cmd == "{\"type\": \"Open\"}") { sAddress = 0x00; sCommand = 0x03; sRepeats = 3; }        //무드등 키기
-  else if (cmd == "{\"type\": \"OK\"}") { sAddress = 0x00; sCommand = 0x45; sRepeats = 3; }          //선풍기 On/Off
-  else if (cmd == "{\"type\": \"Pointer\"}") { sAddress = 0x00; sCommand = 0x47; sRepeats = 3; }     //선풍기 LIGHT 1단/2단/Off
-  else if (cmd == "{\"type\": \"Peace\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 3; }     //
-  else if (cmd == "{\"type\":\"standby\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 4; }
-  else if (cmd == "{\"type\":\"thumbs_up\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 5; }
-  else if (cmd == "{\"type\":\"rock\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 6; }
-  else if (cmd == "{\"type\":\"love_u\"}") { sAddress = 0x0123; sCommand = 0x45; sRepeats = 7; }
-  return 0;
+  /*
+  Open - 무드등 on
+  Close - 무드등 off
+  OK - TV on
+  Peace - TV off
+  One - 선풍기 속도 다운
+  Two - 선풍기 속도 업
+  Three - 
+  Rock - 선풍기 on
+  Phone - 선풍기 off
+  Heart - 다중기기 동시제어
+  */
+  if (cmd == "{\"type\": \"Open\"}")                         //무드등 키기
+  {
+    sAddress = 0x00; sCommand = 0x03; sRepeats = 3;
+  }
+  else if (cmd == "{\"type\": \"Close\"}")                   //무드등 끄기
+  { 
+    sAddress = 0x00; sCommand = 0x02; sRepeats = 3;
+  }
+  else if (cmd == "{\"type\": \"OK\"}")                      //TV 켜기
+  {
+    if (flagTV == 0)
+    {
+      sAddress = 0x08; sCommand = 0xD7; sRepeats = 3;
+      flagTV = 1;
+    }
+    else
+    {
+      sAddress = 0x0123; sCommand = 0xFF; sRepeats = 1;
+      flagTV = 0;
+    }
+  }
+  else if (cmd == "{\"type\": \"Peace\"}")                   //TV 끄기
+  {
+    if (flagTV == 1)
+    {
+      sAddress = 0x08; sCommand = 0xD7; sRepeats = 3;
+      flagTV = 0;
+    }
+    else
+    {
+      sAddress = 0x0123; sCommand = 0xFF; sRepeats = 1;
+      flagTV = 1;
+    }
+  }
+  else if (cmd == "{\"type\": \"One\"}")                     //선풍기 속도 다운
+  {
+    sAddress = 0x00; sCommand = 0x18; sRepeats = 3;
+  }
+  else if (cmd == "{\"type\": \"Two\"}")                     //선풍기 속도 업
+  {
+    sAddress = 0x00; sCommand = 0x15; sRepeats = 3;
+  }
+  else if (cmd == "{\"type\": \"Three\"}")
+  {
+  }
+  else if (cmd == "{\"type\": \"Rock\"}")                    //선풍기 On
+  {
+    if (flagS == 0)
+    {
+      sAddress = 0x00; sCommand = 0x45; sRepeats = 3;
+      flagS = 1;
+    }
+    else
+    {
+      sAddress = 0x0123; sCommand = 0xFF; sRepeats = 1;
+      flagS = 0;
+    }
+  }
+  else if (cmd == "{\"type\": \"Phone\"}")                   //선풍기 Off
+  {
+    if (flagS == 1)
+    {
+      sAddress = 0x00; sCommand = 0x45; sRepeats = 3;
+      flagS = 0;
+    }
+    else
+    {
+      sAddress = 0x0123; sCommand = 0xFF; sRepeats = 1;
+      flagS = 1;
+    }
+  }
+
+  return;
 }
 
 String prevCmd = "temp";
@@ -180,7 +256,6 @@ String prevCmd = "temp";
 void loop()
 {
   receive_ir_data();
-  //mqttClient.poll();
 
   int messageSize = mqttClient.parseMessage();
   if (messageSize)
@@ -210,14 +285,17 @@ void loop()
 
     if (prevCmd != command)
     {
-      if (command == "{\"type\": \"love_u\"}")
+      if (command == "{\"type\": \"Heart\"}")
       {
-        Serial.println(command);
         command = "{\"type\": \"OK\"}";
         IRsignal(command);
         send_ir_data();
         IrReceiver.restartAfterSend();
         command = "{\"type\": \"Open\"}";
+        IRsignal(command);
+        send_ir_data();
+        IrReceiver.restartAfterSend();
+        command = "{\"type\": \"Rock\"}";
         IRsignal(command);
         send_ir_data();
         IrReceiver.restartAfterSend();
