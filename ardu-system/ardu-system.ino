@@ -53,11 +53,6 @@ int        port     = PORT_ADDR;
 
 decode_results results;
 
-//IPAddress local_ip(192, 168, 142, 200);  // 사용되지 않을 고정 IP
-//IPAddress gateway(192, 168, 142, 47);    // PC에서 확인한 기본 게이트웨이
-//IPAddress subnet(255, 255, 255, 0);      // PC와 동일
-//IPAddress dns(8, 8, 8, 8);               // Google Public DNS
-
 void setup()
 {
   Serial.begin(19200);
