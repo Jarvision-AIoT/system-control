@@ -90,10 +90,11 @@ void setup()
   Serial.print(":");
   Serial.println(port);
 
-  if (!mqttClient.connect(broker, port)) {
+  while (!mqttClient.connect(broker, port))
+  {
     Serial.print("[ERROR] MQTT connection failed! Error code = ");
     Serial.println(mqttClient.connectError());
-    while (1); // stop here
+    delay(1000);
   }
 
   Serial.println("Connected to MQTT broker!");
