@@ -1,41 +1,10 @@
-/*
-  ---------------------------------
-  IMPORTANT: Configuration Reminder
-  ---------------------------------
-  
-  Before running this code, make sure to check the "secrets.h" file
-  for important configuration details such as Wi-Fi credentials and 
-  MQTT Broker settings.
-
-  The "secrets.h" file should include:
-  - Your Wi-Fi SSID and Password
-  - MQTT Broker (mosquitto) IP, Topic, Port Address
-
-  Ensure that "secrets.h" is properly configured and includes the correct
-  information for your project. Failure to do so may result in connection
-  errors or incorrect behavior of your application.
-
-  Note: The "secrets.h" file should be located in the same directory as
-  this sketch.
-*/
-
-/*
-  ---------------------------------
-      INFO: ArduinoJson library   
-  ---------------------------------
-
-  Download ArduinoJson library from the Library Manager:
-  https://www.arduino.cc/reference/en/libraries/arduinojson/
-
-  For guidance on serialization and deserialization, visit:
-  https://arduinojson.org/v7/assistant/
-*/
 #include <Arduino.h>
 #include "secrets.h"                // WIFI_SSID, WIFI_PASSWORD
 #include <ArduinoMqttClient.h>
 #include "PinDefinitionsAndMore.h"  // IR_RECEIVE_PIN, IR_SEND_PIN
 #include <IRremote.hpp>
 #include <WiFiS3.h>                 // Arduino UNO R4 WiFi
+#include <Servo.h>
 
 #define DECODE_NEC
 #define DECODE_DISTANCE_WIDTH
@@ -50,9 +19,13 @@ const char broker[] = BROKER_IP;
 const char topic[]  = TOPIC_ID;
 int        port     = PORT_ADDR;
 
+Servo servo;
+int value = 0; // 각도 조절 변수
+
 // ==============================================
 //  기기 상태 및 IR 신호 관리 클래스
-//  • ON/​OFF 신호 외에 커스텀 명령도 보낼 수 있도록 sendCustom() 추가
+//  • 토글용 ON/OFF보내기(sendIr) 및
+//    원하는 addr/cmd/repeats 바로 보내기(sendCustom)
 // ==============================================
 class DeviceController {
 private:
@@ -64,7 +37,7 @@ private:
   uint8_t  offCmd;
   uint8_t  offRepeats;
 
-  bool state; // false = OFF, true = ON
+  bool state; // false = OFF(추정), true = ON(추정)
 
 public:
   DeviceController(uint16_t on_address, uint8_t on_command, uint8_t on_repeat,
@@ -76,12 +49,14 @@ public:
   bool getState() const {
     return state;
   }
-
   void setState(bool newState) {
     state = newState;
   }
+  void toggleState() {
+    state = !state;
+  }
 
-  // ON 또는 OFF 상태에 따라 기본 토글 신호 전송
+  // ON/OFF 상태에 따라 토글 신호 전송
   void sendIr() const {
     uint16_t addrToSend  = (state ? onAddr  : offAddr);
     uint8_t  cmdToSend   = (state ? onCmd   : offCmd);
@@ -97,7 +72,7 @@ public:
     IrSender.sendNEC(addrToSend, cmdToSend, repToSend);
   }
 
-  // 원하는 addr/cmd/repeats 값으로 바로 IR 전송 (로그 출력 포함)
+  // 커스텀 addr/cmd/repeats 값으로 IR 전송
   void sendCustom(uint16_t addr, uint8_t cmd, uint8_t repeats) const {
     Serial.print(F("Sending IR -> Addr: 0x"));
     Serial.print(addr, HEX);
@@ -114,8 +89,8 @@ public:
 //  무드등, TV, 선풍기 컨트롤러 객체 생성
 // ==============================================
 // • moodLight: ON=0x00/0x03, OFF=0x00/0x02 (Repeats=3)
-// • tv:        ON=0x08/0xD7, OFF=0x08/0xD7 (전원 토글용 동일 신호, 상태 분기 처리)
-// • fan:       ON=0x00/0x45, OFF=0x00/0x45 (ON/OFF 분기 처리)
+// • tv:        ON=0x08/0xD7, OFF=0x08/0xD7 (토글 신호)
+// • fan:       ON=0x00/0x45, OFF=0x00/0x45 (토글 신호, 실제 상태 알 수 없음)
 // ==============================================
 DeviceController moodLight(0x00, 0x03, 3,
                            0x00, 0x02, 3);
@@ -123,17 +98,12 @@ DeviceController moodLight(0x00, 0x03, 3,
 DeviceController tv(0x08, 0xD7, 3,
                     0x08, 0xD7, 3);
 
+// “fan”은 ON=0x00/0x45, OFF=0x00/0x45(토글) 신호만 보냄. 실제 켜짐/꺼짐은 알 수 없음
 DeviceController fan(0x00, 0x45, 3,
                      0x00, 0x45, 3);
 
-// ==============================================
-//  선풍기 속도 상태 변수
-//    • fanSpeed = 1 또는 2
-//    • 팬이 켜질 때 기본값은 1
-// ==============================================
-int fanSpeed = 1;
-
 void setup() {
+  servo.attach(7);
   Serial.begin(19200);
   delay(2000);
 
@@ -142,7 +112,6 @@ void setup() {
 
   WiFi.begin(ssid, pass);
   delay(3000);
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.print("-");
@@ -212,93 +181,88 @@ void receive_ir_data() {
 void processCommand(const String &cmd) {
   // ------------ 무드등 ------------
   if (cmd == "{\"type\": \"Open\"}") {
-    // 무드등이 꺼져 있을 때만 ON
-    // if (!moodLight.getState()) {
-      moodLight.setState(true);
-      moodLight.sendIr();
-    // }
+    // 무드등 ON
+    value = 0;
+    servo.write(value);
+    delay(300);
+    moodLight.setState(true);
+    moodLight.sendIr();
   }
   else if (cmd == "{\"type\": \"Close\"}") {
-    // 무드등이 켜져 있을 때만 OFF
-    // if (moodLight.getState()) {
-      moodLight.setState(false);
-      moodLight.sendIr();
-    // }
+    // 무드등 OFF
+    value = 0;
+    servo.write(value);
+    delay(300);
+    moodLight.setState(false);
+    moodLight.sendIr();
   }
 
-  // ------------ TV ------------
-  else if (cmd == "{\"type\": \"OK\"}") {
-    // TV가 꺼져 있을 때만 ON
-    if (!tv.getState()) {
-      tv.setState(true);
-      tv.sendIr();
-    }
-  }
+  // ------------ TV (토글) ------------
   else if (cmd == "{\"type\": \"Peace\"}") {
-    // TV가 켜져 있을 때만 OFF
-    if (tv.getState()) {
-      tv.setState(false);
-      tv.sendIr();
-    }
+    // TV 토글 신호
+    value = 90;
+    servo.write(value);
+    delay(300);
+    tv.toggleState();
+    tv.sendIr();
   }
 
-  // ------------ 선풍기 ---------------
+  // ------------ 선풍기 (토글) ------------
   else if (cmd == "{\"type\": \"Rock\"}") {
-    // 팬이 꺼져 있을 때만 ON (켜지면 속도=1)
-    if (!fan.getState()) {
-      fan.setState(true);
-      fan.sendIr();
-      fanSpeed = 1;
-    }
-  }
-
-  else if (cmd == "{\"type\": \"Phone\"}") {
-    // 팬이 켜져 있을 때만 OFF
-    if (fan.getState()) {
-      fan.setState(false);
-      fan.sendIr();
-      // 꺼질 때 속도 상태 초기화는 필요 없으므로 별도 처리 없음
-    }
+    // 선풍기 팬 토글 신호
+    value = 180;
+    servo.write(value);
+    delay(300);
+    fan.toggleState();
+    fan.sendIr();
   }
 
   // ------------ 선풍기 속도 ↓ (One) ------------
   else if (cmd == "{\"type\": \"One\"}") {
-    // 팬이 켜져 있고, 현재 속도가 2일 때만 ↓ 신호 전송
-    if (fan.getState() && fanSpeed == 2) {
-      // DeviceController::sendCustom() 사용
-      fan.sendCustom(0x00, 0x18, 3);  // Addr=0x00, Cmd=0x18, Repeats=3
-      fanSpeed = 1;
+    // 팬이 켜져 있는 상태에서만 ↓ 신호 전송
+    if (fan.getState()) {
+      value = 180;
+      servo.write(value);
+      delay(300);
+      fan.sendCustom(0x00, 0x18, 3); // Addr=0x00, Cmd=0x18, Repeats=3
     }
   }
   // ------------ 선풍기 속도 ↑ (Two) ------------
   else if (cmd == "{\"type\": \"Two\"}") {
-    // 팬이 켜져 있고, 현재 속도가 1일 때만 ↑ 신호 전송
-    if (fan.getState() && fanSpeed == 1) {
-      fan.sendCustom(0x00, 0x15, 3);  // Addr=0x00, Cmd=0x15, Repeats=3
-      fanSpeed = 2;
+    // 팬이 켜져 있는 상태에서만 ↑ 신호 전송
+    if (fan.getState()) {
+      value = 180;
+      servo.write(value);
+      delay(300);
+      fan.sendCustom(0x00, 0x15, 3); // Addr=0x00, Cmd=0x15, Repeats=3
     }
   }
 
-  // ------------ 다중 기기 동시 제어 예시 ------------
+  // ------------ 다중 기기 동시 제어 (Heart) ------------
   else if (cmd == "{\"type\": \"Heart\"}") {
-    // TV ON (켜져 있지 않을 때만)
-    if (!tv.getState()) {
-      tv.setState(true);
-      tv.sendIr();
-      delay(100);
-    }
-    // 무드등 ON (켜져 있지 않을 때만)
-    // if (!moodLight.getState()) {
-      moodLight.setState(true);
-      moodLight.sendIr();
-      delay(100);
-    // }
-    // 선풍기 ON (켜져 있지 않을 때만, 속도=1)
-    if (!fan.getState()) {
-      fan.setState(true);
-      fan.sendIr();
-      fanSpeed = 1;
-    }
+    // 무드등 토글
+    value = 0;
+    servo.write(value);
+    delay(300);
+    moodLight.toggleState();
+    moodLight.sendIr();
+    delay(300);
+
+    // TV 토글
+    value = 90;
+    servo.write(value);
+    delay(300);
+    tv.toggleState();
+    tv.sendIr();
+    delay(300);
+
+    // 팬 토글
+    value = 180;
+    servo.write(value);
+    delay(300);
+    fan.toggleState();
+    fan.sendIr();
+    delay(300);
   }
 }
 
@@ -320,20 +284,9 @@ void loop() {
     while (mqttClient.available()) {
       command += (char)mqttClient.read();
     }
-
-    //test code for time taken
-    if (command == "test complete")
-     return;
-    mqttClient.beginMessage(topic);
-    mqttClient.print("test complete");
-    mqttClient.endMessage();
-
     Serial.print("Parsed command: ");
     Serial.println(command);
 
-    if (prevCmd != command) {
-      processCommand(command);
-      prevCmd = command;
-    }
+    processCommand(command);
   }
 }
