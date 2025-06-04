@@ -187,6 +187,7 @@ void processCommand(const String &cmd) {
     delay(300);
     moodLight.setState(true);
     moodLight.sendIr();
+    Serial.println(moodLight.getState());
   }
   else if (cmd == "{\"type\": \"Close\"}") {
     // 무드등 OFF
@@ -195,6 +196,7 @@ void processCommand(const String &cmd) {
     delay(300);
     moodLight.setState(false);
     moodLight.sendIr();
+    Serial.println(moodLight.getState());
   }
 
   // ------------ TV (토글) ------------
@@ -205,6 +207,7 @@ void processCommand(const String &cmd) {
     delay(300);
     tv.toggleState();
     tv.sendIr();
+    Serial.println(tv.getState());
   }
 
   // ------------ 선풍기 (토글) ------------
@@ -215,6 +218,7 @@ void processCommand(const String &cmd) {
     delay(300);
     fan.toggleState();
     fan.sendIr();
+    Serial.println(fan.getState());
   }
 
   // ------------ 선풍기 속도 ↓ (One) ------------
@@ -263,10 +267,11 @@ void processCommand(const String &cmd) {
     fan.toggleState();
     fan.sendIr();
     delay(300);
+    Serial.println(moodLight.getState());
+    Serial.println(tv.getState());
+    Serial.println(fan.getState());
   }
 }
-
-String prevCmd = "";
 
 void loop() {
   receive_ir_data();
