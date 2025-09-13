@@ -3,13 +3,12 @@
 
 ## 주요 기능
 - Arduino Uno R4 WiFi 제어 코드
-- Firebase 연동 및 통신
+- MQTT 연동 및 통신
 
 ## Tech Stack
 - Arduino (Uno R4 WiFi)
-- Firebase Realtime Database
-- C++
-- Python
+- mosquitto MQTT connection
+- C
   
 ## 디렉토리 구조
 ```plaintext
